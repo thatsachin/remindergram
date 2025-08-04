@@ -8,6 +8,8 @@ from models import Reminder, Event
 
 scheduler = AsyncIOScheduler(timezone=zoneinfo.ZoneInfo("UTC"))
 
+send_due_reminder = None
+
 def scan_and_queue():
     db: Session = SessionLocal()
     now = datetime.datetime.utcnow()
