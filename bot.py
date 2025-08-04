@@ -156,10 +156,15 @@ application.add_handler(CommandHandler("list", list_cmd))
 application.add_handler(CallbackQueryHandler(button_cb))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, natlang_handler))
 
+async def on_start(app):
+    # Now event loop is running!
+    start_scheduler(app)
+
 if __name__ == "__main__":
     start_scheduler()
     # wire scheduler ↔ bot
     from scheduler import start as start_scheduler, send_due_reminder
     send_due_reminder = send_due_reminder          # assign our local coroutine
-    start_scheduler(application)                   # pass Application to scheduler
+    application.post_init = on_start                   # pass Application to scheduler
     application.run_polling()
+
