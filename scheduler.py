@@ -5,7 +5,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models import Reminder, Event
-from bot_helpers import send_due_reminder     # will be defined in bot.py
 
 scheduler = AsyncIOScheduler(timezone=zoneinfo.ZoneInfo("UTC"))
 
