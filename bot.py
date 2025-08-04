@@ -157,14 +157,11 @@ application.add_handler(CallbackQueryHandler(button_cb))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, natlang_handler))
 
 async def on_start(app):
-    # Now event loop is running!
-    start_scheduler(app)
+    from scheduler import start as start_scheduler, send_due_reminder
+    # Make sure send_due_reminder refers to the bot.py implementation, if needed
+    # Or, if it's in scheduler anyway, ignore.
+    start_scheduler(app)            # Only call AFTER async loop is running!
 
 if __name__ == "__main__":
-    start_scheduler()
-    # wire scheduler ↔ bot
-    from scheduler import start as start_scheduler, send_due_reminder
-    send_due_reminder = send_due_reminder          # assign our local coroutine
-    application.post_init = on_start                   # pass Application to scheduler
+    application.post_init = on_start   # PTB calls this after the loop starts
     application.run_polling()
-
