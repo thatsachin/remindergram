@@ -14,7 +14,7 @@ from gpt_parser import parse
 from scheduler import start as start_scheduler
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ALLOWED_USERS = {12345678, 98765432}            # two user IDs
+ALLOWED_USERS = {5478021276, 98765432}            # two user IDs
 
 # ---------- helpers ----------
 def user_only(func):
@@ -159,3 +159,4 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, natlang_
 if __name__ == "__main__":
     start_scheduler()
     application.run_polling()
+
