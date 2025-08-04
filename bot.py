@@ -158,5 +158,8 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, natlang_
 
 if __name__ == "__main__":
     start_scheduler()
+    # wire scheduler ↔ bot
+    from scheduler import start as start_scheduler, send_due_reminder
+    send_due_reminder = send_due_reminder          # assign our local coroutine
+    start_scheduler(application)                   # pass Application to scheduler
     application.run_polling()
-
