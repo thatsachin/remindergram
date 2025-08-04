@@ -1,7 +1,8 @@
 # gpt_parser.py
 import os, json, datetime, openai
 openai.api_key = os.getenv("OPENAI_API_KEY")
-MODEL = "gpt-3.5-turbo"
+openai.api_base = "https://api.studio.nebius.com/v1"
+MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
 SYSTEM_PROMPT = """You are a reminder-creation assistant.
 If the text is a valid reminder (specific task AND a specific time or clear recurrence)
