@@ -16,7 +16,7 @@ from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
 )
 import aiohttp
@@ -28,7 +28,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DB_PATH = os.getenv("DB_PATH", "reminders.db")
 
 # --- Logging ---
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
@@ -73,7 +76,7 @@ def init_db():
 init_db()
 
 # --- OpenAI LLM Parsing ---
-OPENAI_API_URL = "https://api.studio.nebius.com/v1/chat/completions"
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 SYSTEM_PROMPT = (
     "You are a reminder-creation assistant. "
     "If the text is a valid reminder (specific task and a specific time or recurrence), return JSON: "
@@ -88,7 +91,7 @@ async def parse_reminder(text):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "meta-llama/Llama-3.3-70B-Instruct",
+        "model": "gpt-3.5-turbo",
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text}
@@ -96,26 +99,31 @@ async def parse_reminder(text):
         "max_tokens": 128,
         "temperature": 0
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(OPENAI_API_URL, headers=headers, json=data) as resp:
-            if resp.status != 200:
-                logger.error(f"OpenAI API error: {resp.status}")
-                return {"error": "llm_error"}
-            result = await resp.json()
-            try:
-                content = result["choices"][0]["message"]["content"]
-                # Extract JSON from response
-                match = re.search(r'\{.*\}', content, re.DOTALL)
-                if match:
-                    return json.loads(match.group(0))
-                else:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(OPENAI_API_URL, headers=headers, json=data) as resp:
+                if resp.status != 200:
+                    logger.error(f"OpenAI API error: {resp.status}")
+                    return {"error": "llm_error"}
+                result = await resp.json()
+                try:
+                    content = result["choices"][0]["message"]["content"]
+                    # Extract JSON from response
+                    match = re.search(r'\{.*\}', content, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(0))
+                    else:
+                        return {"error": "parse_error"}
+                except Exception as e:
+                    logger.error(f"OpenAI parse error: {e}")
                     return {"error": "parse_error"}
-            except Exception as e:
-                logger.error(f"OpenAI parse error: {e}")
-                return {"error": "parse_error"}
+    except Exception as e:
+        logger.error(f"OpenAI request error: {e}")
+        return {"error": "request_error"}
 
 # --- APScheduler Setup ---
 scheduler = AsyncIOScheduler(timezone="UTC")
+application = None  # Will be set in main()
 
 def schedule_all_reminders():
     conn = get_db()
@@ -143,34 +151,40 @@ def schedule_reminder(reminder_row):
     )
 
 async def send_reminder_job(reminder_id):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM reminders WHERE id=? AND status='pending'", (reminder_id,))
-    row = c.fetchone()
-    if not row:
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM reminders WHERE id=? AND status='pending'", (reminder_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return
+        user_id = row["user_id"]
+        text = row["text"]
+        # Insert event
+        fired_at = datetime.datetime.utcnow()
+        c.execute("INSERT INTO events (reminder_id, fired_at_utc) VALUES (?, ?)", (reminder_id, fired_at))
+        event_id = c.lastrowid
+        conn.commit()
         conn.close()
-        return
-    user_id = row["user_id"]
-    text = row["text"]
-    # Insert event
-    fired_at = datetime.datetime.utcnow()
-    c.execute("INSERT INTO events (reminder_id, fired_at_utc) VALUES (?, ?)", (reminder_id, fired_at))
-    event_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    # Send Telegram message with inline buttons
-    keyboard = [
-        [
-            InlineKeyboardButton("Did ✅", callback_data=f"did|{event_id}|{reminder_id}"),
-            InlineKeyboardButton("Didn't ❌", callback_data=f"didnt|{event_id}|{reminder_id}"),
-            InlineKeyboardButton("Snooze 💤", callback_data=f"snooze|{event_id}|{reminder_id}")
+        # Send Telegram message with inline buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("Did ✅", callback_data=f"did|{event_id}|{reminder_id}"),
+                InlineKeyboardButton("Didn't ❌", callback_data=f"didnt|{event_id}|{reminder_id}"),
+                InlineKeyboardButton("Snooze 💤", callback_data=f"snooze|{event_id}|{reminder_id}")
+            ]
         ]
-    ]
-    await application.bot.send_message(
-        chat_id=user_id,
-        text=f"⏰ Reminder: {text}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+        if application and application.bot:
+            await application.bot.send_message(
+                chat_id=user_id,
+                text=f"⏰ Reminder: {text}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            logger.error(f"Application not available for reminder {reminder_id}")
+    except Exception as e:
+        logger.error(f"Error sending reminder {reminder_id}: {e}")
 
 # --- Telegram Bot Handlers ---
 
@@ -513,24 +527,33 @@ def compute_next_occurrence(last_dt, recur_rule):
     return None
 
 # --- Main Application Setup ---
-application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+async def main():
+    global application
+    # Initialize the Application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help_command))
-application.add_handler(CallbackQueryHandler(button_callback))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Add message handlers with proper order
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# --- Snooze handler (must be before handle_message) ---
-async def snooze_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    handled = await handle_snooze(update, context)
-    if not handled:
-        await handle_message(update, context)
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, snooze_router), group=1)
-
-# --- Start scheduler and bot ---
-if __name__ == "__main__":
+    # Start scheduler
     schedule_all_reminders()
     scheduler.start()
+    
     logger.info("Bot started.")
-    application.run_polling()
+    
+    # Start the bot
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
+        raise 
