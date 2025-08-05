@@ -73,7 +73,7 @@ def init_db():
 init_db()
 
 # --- OpenAI LLM Parsing ---
-OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_API_URL = "https://api.studio.nebius.com/v1/chat/completions"
 SYSTEM_PROMPT = (
     "You are a reminder-creation assistant. "
     "If the text is a valid reminder (specific task and a specific time or recurrence), return JSON: "
@@ -88,7 +88,7 @@ async def parse_reminder(text):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "gpt-3.5-turbo",
+        "model": "meta-llama/Llama-3.3-70B-Instruct",
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text}
@@ -533,3 +533,4 @@ if __name__ == "__main__":
     scheduler.start()
     logger.info("Bot started.")
     application.run_polling()
+
