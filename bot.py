@@ -128,7 +128,7 @@ application = None  # Will be set in main()
 def schedule_all_reminders():
     conn = get_db()
     c = conn.cursor()
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     c.execute("""
         SELECT * FROM reminders
         WHERE status='pending' AND next_trigger_utc > ?
@@ -140,7 +140,7 @@ def schedule_all_reminders():
 def schedule_reminder(reminder_row):
     reminder_id = reminder_row["id"]
     trigger_time = reminder_row["next_trigger_utc"]
-    if trigger_time < datetime.datetime.utcnow():
+    if trigger_time < datetime.datetime.now(datetime.timezone.utc):
         return
     scheduler.add_job(
         send_reminder_job,
@@ -162,7 +162,7 @@ async def send_reminder_job(reminder_id):
         user_id = row["user_id"]
         text = row["text"]
         # Insert event
-        fired_at = datetime.datetime.utcnow()
+        fired_at = datetime.datetime.now(datetime.timezone.utc)
         c.execute("INSERT INTO events (reminder_id, fired_at_utc) VALUES (?, ?)", (reminder_id, fired_at))
         event_id = c.lastrowid
         conn.commit()
@@ -260,7 +260,7 @@ async def create_reminder(update, context, text):
         await update.message.reply_text("Sorry, I couldn't parse the time. Please try again.")
         return
     is_recurring = bool(recurrence and recurrence.lower() not in ("", "none", "null"))
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -416,7 +416,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, event_id, reminder_id = data
     event_id = int(event_id)
     reminder_id = int(reminder_id)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     conn = get_db()
     c = conn.cursor()
     # Check event belongs to this user
@@ -492,7 +492,7 @@ async def handle_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("Sorry, I couldn't parse the snooze time. Please try again.")
         return True
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -550,10 +550,24 @@ async def main():
     await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
+    import asyncio
+    import sys
+
     try:
-        asyncio.run(main())
+        if sys.platform == "win32" and sys.version_info >= (3, 8):
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        try:
+            asyncio.run(main())
+        except RuntimeError as e:
+            if "already running" in str(e):
+                # Fallback for environments with a running event loop
+                loop = asyncio.get_event_loop()
+                loop.create_task(main())
+                loop.run_forever()
+            else:
+                raise
     except KeyboardInterrupt:
         logger.info("Bot stopped by user.")
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
-        raise 
+        raise
